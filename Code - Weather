@@ -1,0 +1,296 @@
+#IMPORT STATEMENTS#
+import requests
+import json
+import pandas as pd
+from datetime import datetime
+import time
+import numpy as np
+from openpyxl import load_workbook
+import os
+import sys
+import xlsxwriter
+
+
+
+# Store the API Key
+APIKEY = '11e0784e5814fa10c1dbe64c2b2fcfda'
+
+# Create the base URL for acessing 'Open Weather API', inserting SAS, Marlow lat & lon values
+baseURL = 'https://api.openweathermap.org/data/2.5/onecall?lat=51.55733&lon=-0.81686&exclude=current,minutely,alerts&appid=' + APIKEY
+
+# API request to check for errors
+response = requests.get(baseURL)
+
+# If this print statement returns 200 everything is ok, otherwise find problem here: https://www.dataquest.io/blog/python-api-tutorial/
+print(response.status_code)
+
+# If no errors (status code 200 is returned), create Data object
+data = response.json()
+
+# Create JSON readable data object
+data2 = json.dumps(response.json(),indent=4)
+
+#print (data2)
+
+
+
+
+
+# Create two tables, one for Daily Data and one for Hourly Data
+
+# Daily Data Creation...
+
+# Create empty lists for each data value we require - For Daily Data
+Daily_datetime = [] # datetime
+Daily_pop = [] # probability of precipitation 
+Daily_Day_temp = [] # temperature (kelvin)
+Daily_Night_temp = [] # temperature (kelvin)
+Daily_Min_temp = [] # temperature (kelvin)
+Daily_Max_temp = [] # temperature (kelvin)
+Daily_rain = [] # rain (mm)
+
+# Assign data to relevant Daily lists, as rain is not guaranteed this must be checked for existence in a conditional statement
+for i in range (0, len (data['daily'])):
+    Daily_datetime.append(data['daily'][i]['dt'])
+    Daily_pop.append(data['daily'][i]['pop'])
+    Daily_Day_temp.append(data['daily'][i]['temp']['day'])
+    Daily_Night_temp.append(data['daily'][i]['temp']['night'])
+    Daily_Min_temp.append(data['daily'][i]['temp']['min'])
+    Daily_Max_temp.append(data['daily'][i]['temp']['max'])
+    if 'rain' in data['daily'][i].keys():
+        Daily_rain.append(data['daily'][i]['rain'])
+    else:
+        Daily_rain.append(0)
+
+# Convert Kelvin to Celcius
+Daily_Day_temp = [x - 273.15 for x in Daily_Day_temp]
+Daily_Night_temp = [x - 273.15 for x in Daily_Night_temp]
+Daily_Min_temp = [x - 273.15 for x in Daily_Min_temp]
+Daily_Max_temp = [x - 273.15 for x in Daily_Max_temp]
+
+# Create a table to capture the Daily date, pop, temperature and rain
+Daily_Weather_Table = pd.DataFrame(
+    {'datetime': Daily_datetime,
+     'probability of rain': Daily_pop,
+     'day_temp': Daily_Day_temp,
+     'night_temp': Daily_Night_temp,
+     'min_temp': Daily_Min_temp,
+     'max_temp': Daily_Max_temp,
+     'rain': Daily_rain
+    })
+
+# Format unix datetime column to readable datetime 
+Daily_Weather_Table['datetime'] = pd.to_datetime(Daily_Weather_Table['datetime'],unit='s')
+
+# Create separate date and time columns, based on each datetime
+Daily_Weather_Table['date'] = [d.date() for d in Daily_Weather_Table['datetime']]
+Daily_Weather_Table['time'] = [d.time() for d in Daily_Weather_Table['datetime']]
+
+# Get the first 7 entries from Daily_Weather_Table 
+#Daily_Weather_Table = Daily_Weather_Table.head(n=7)
+
+#Get the last recorded forecast entry (the latest day) from Daily_Weather_Table
+latest_day = pd.DataFrame(Daily_Weather_Table.tail(1))
+
+#Create a variable to hold the path to the Daily Weather Dataset
+filename1 = r'C:\Users\sukjeo\OneDrive - SAS\Desktop\Projects\IoT Marlow Estate Project\Code\DailyWeatherData.xlsx'
+
+#Create a variable to hold the path to the Latest Day Excel Spreadsheet, this spreadhseet holds one observation, the last forecast entry appended
+filename2 = r'C:\Users\sukjeo\OneDrive - SAS\Desktop\Projects\IoT Marlow Estate Project\Code\Latest_Day.xlsx'
+
+#Export Daily Weather Table as Excel File - DON'T DO THIS AS IT WILL OVERWRITE THE CURRENT ONE
+#Daily_Weather_Table.to_excel('DailyWeatherData.xlsx', index=False)
+
+#Delete the current xlsx file for latest day, to ensure that the most recent entry is read in
+os.remove(filename2)
+
+#Export newly recorded entry for latest_day as excel file
+latest_day.to_excel('Latest_Day.xlsx', index=False)
+
+#Create a variable to hold the path to the previously merged dataset
+filename3 = r'C:\Users\sukjeo\OneDrive - SAS\Desktop\Projects\IoT Marlow Estate Project\Code\Merged Results.xlsx' 
+
+#Read in the files (previous merged dataset and latest day) as dataframes
+f3 = pd.read_excel(filename3, engine='openpyxl') 
+f2 = pd.read_excel(filename2, engine='openpyxl') 
+#Create new df
+dfMerged = pd.DataFrame()
+
+#Append the previously merged dataset to the new dataframe
+dfMerged = dfMerged.append(f3)
+#Append the latest day to the end
+dfMerged = dfMerged.append(f2)
+
+#Check to see if the newly appended date already exists
+boolean = not dfMerged["datetime"].is_unique
+#If it does then quit the program, if it doesn't export the file
+if boolean is True:
+    sys.exit()
+else:
+    #Export as a new file 
+    dfMerged.to_excel("Merged Results.xlsx", index = False)
+
+    #Take copy of the Latest Merged Dataset and of the Daily Weather Table, as backup
+    Merged_Results_COPY = pd.DataFrame()
+    Merged_Results_COPY = Merged_Results_COPY.append(dfMerged)
+    Merged_Results_COPY.to_excel("Merged_Results_COPY.xlsx", index=False)
+
+
+
+
+
+
+# Append last 8 records of Merged Dataset to Variance Dataset
+filename4 = r'C:\Users\sukjeo\OneDrive - SAS\Desktop\Projects\IoT Marlow Estate Project\Code\VarianceDataset.xlsx'
+f4 = pd.read_excel(filename4, engine='openpyxl') 
+New_Readings_df = Daily_Weather_Table.head(n=8)
+
+Variance_Merged = pd.DataFrame()
+Variance_Merged = Variance_Merged.append(f4)
+Variance_Merged = Variance_Merged.append(New_Readings_df)
+
+Variance_Merged_Sorted = Variance_Merged.sort_values(by='datetime', ascending=True)
+
+Variance_Merged_Sorted.to_excel("VarianceDataset.xlsx", index = False)
+
+
+
+
+
+
+# # Hourly Data Creation...
+
+# # Create empty lists for each data value we require - For Hourly Data
+# Hourly_datetime = [] # datetime
+# Hourly_pop = [] # probability of precipitation 
+# Hourly_temp = [] # temperature (kelvin)
+# Hourly_rain = [] # rain (mm)
+# Hourly_rain2 = [] # rain time
+
+# # Assign data to relevant Hourly lists, as rain is not guaranteed this must be checked for existence in a conditional statement
+# for i in range (0, len (data['hourly'])):
+#     Hourly_datetime.append(data['hourly'][i]['dt'])
+#     Hourly_pop.append(data['hourly'][i]['pop'])
+#     Hourly_temp.append(data['hourly'][i]['temp'])
+#     if 'rain' in data['hourly'][i].keys():
+#         #Hourly_rain2.append(data['hourly'][i]['rain'][0])
+#         Hourly_rain.append(data['hourly'][i]['rain'])
+#     else:
+#         Hourly_rain.append({0:0})
+
+# # Separate the keys and values into lists for Hourly rain readings
+# Hourly_keys=[]
+# Hourly_values=[]
+# for item in Hourly_rain:
+#     for k, v in item.items():
+#         Hourly_keys.append(k)
+#         Hourly_values.append(v)
+
+# #print(hourly_keys)
+# #print(hourly_values)
+
+# #print(Hourly_datetime)
+# #print(Hourly_pop)
+# #print(Hourly_temp)
+# #print(Hourly_rain)
+
+# # Convert Kelvin to Celcius
+# Hourly_temp = [x - 273.15 for x in Hourly_temp]
+
+# # Create a table to capture the Hourly date, pop, temperature and rain (including previously separated time and level readings)
+# Hourly_Weather_Table = pd.DataFrame(
+#     {'datetime': Hourly_datetime,
+#      'probability of rain': Hourly_pop,
+#      'temp': Hourly_temp,
+#      'rain': Hourly_rain,
+#      'rain time' : Hourly_keys,
+#      'rain levels' : Hourly_values
+#     })
+
+# # Format unix datetime column to readable datetime 
+# Hourly_Weather_Table['datetime'] = pd.to_datetime(Hourly_Weather_Table['datetime'],unit='s')
+
+# # Create separate date and time columns, based on each datetime
+# Hourly_Weather_Table['date'] = [d.date() for d in Hourly_Weather_Table['datetime']]
+# Hourly_Weather_Table['time'] = [d.time() for d in Hourly_Weather_Table['datetime']]
+
+# # Drop the original Rain readings (dictionaries created from source data)
+# Hourly_Weather_Table = Hourly_Weather_Table.drop ('rain', 1)
+
+#print(Hourly_Weather_Table)
+
+# Create file to store the Hourly data table
+
+# # Convert Hourly Weather to Pandas DF
+# Hourly_df = pd.DataFrame (data=Hourly_Weather_Table)
+
+# # Export as Excel File
+# Hourly_df.to_excel('HourlyWeatherData.xlsx', index=False)
+
+
+
+
+
+
+# Call for 5 days, prior to current day, Historical Data
+
+# Get timestamp of today
+# Dt_Now = int(time.time())
+
+# # Get timestamp of yesterday (86400 seconds in a day)
+# Dt_Now_Minus1Day = Dt_Now - 86400
+
+# # Get timestamp of 2 days ago (172800 seconds in 2 days)
+# Dt_Now_Minus2Day = Dt_Now - 172800
+
+# # Get timestamp of 3 days ago (259200 seconds in 3 days)
+# Dt_Now_Minus3Day = Dt_Now - 259200
+
+# # Get timestamp of 4 days ago (345600 seconds in 4 days)
+# Dt_Now_Minus4Day = Dt_Now - 345600
+
+# # Get timestamp of 5 days ago (432000 seconds in 5 days)
+# Dt_Now_Minus5Day = Dt_Now - 432000
+
+
+# # Convert timestamp into string for API
+# Date_Now = str(Dt_Now)
+# Date_Yesterday = str(Dt_Now_Minus1Day)
+# Date_2Days_Ago = str(Dt_Now_Minus2Day)
+# Date_3Days_Ago = str(Dt_Now_Minus3Day)
+# Date_4Days_Ago = str(Dt_Now_Minus4Day)
+# Date_5Days_Ago = str(Dt_Now_Minus5Day)
+
+#print(Dt_Now_Minus5Day)
+#print(datetime.fromtimestamp(1611179740))
+
+# # # Store the API Key
+# APIKEY = '11e0784e5814fa10c1dbe64c2b2fcfda'
+
+# # List of all historical dates
+# hist_dates = [Date_Yesterday, Date_2Days_Ago, Date_3Days_Ago, Date_4Days_Ago, Date_5Days_Ago]
+
+# dfs = []
+
+# for i in hist_dates:
+#     # Create the base URL for acessing 'Open Weather API', inserting SAS, Marlow lat & lon values
+#     HistoricBaseURL = 'https://api.openweathermap.org/data/2.5/onecall/timemachine?lat=51.55733&lon=-0.81686&dt=' + i + '&appid=' + APIKEY
+#     # API request to check for errors
+#     response = requests.get(HistoricBaseURL)
+#     # Error checking response codes, find details of problem here: https://www.dataquest.io/blog/python-api-tutorial/
+#     if (response.status_code) == 200:
+#         print('Success, Response Code: ' + str(response.status_code) + i)
+#         Hist_Data = response.json()
+#         df = pd.DataFrame(Hist_Data['current'])
+#         dfs.append(df)
+#         if Hist_Data['current']
+#         print (Hist_Data['current'])
+#     else:
+#         print('Error, Response Code ' + str(response.status_code) + ' for more info visit https://www.dataquest.io/blog/python-api-tutorial/')
+
+# dfTest = pd.concat(dfs, sort=False)
+#dfTest.to_excel('WeatherHistory.xlsx')
+
+
+
+
