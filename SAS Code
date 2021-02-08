@@ -1,0 +1,55 @@
+/* Create Libname*/
+libname SW '\\gbrmisappstest\e$\mis_projects\AIoT Soil Health';
+
+/* Allow spaces in variables */
+options validvarname=any;
+options MSGLEVEL=I; 
+
+
+/* Import soil excel with sensor readings*/
+proc import datafile  =  '\\gbrmisappstest\e$\mis_projects\AIoT Soil Health\soilData'
+ out  =  soil_excel
+ dbms  =  xlsx 
+ replace
+ ;
+run;
+
+/* Import weather excel with API data*/
+proc import datafile  =  '\\gbrmisappstest\e$\mis_projects\AIoT Soil Health\Merged Results'
+ out  =  weather_excel
+ dbms  =  xlsx
+ replace
+ ;
+run;
+
+/* Prep soil data into SAS dataset */
+data soil_prep (drop=soil);
+	set soil_excel (drop=datetime date);
+	soil_date = datepart(input(collected,anydtdtm.));
+	soil_datetime = input(collected,anydtdtm.);
+	phosphorous = soil;
+	format soil_datetime datetime18.;
+	format soil_date ddmmyy10.;
+run;
+
+/* Prep weather data into SAS dataset */
+data weather_prep (drop=date datetime time date2 'probability of rain'n);
+	set weather_excel;
+  	date2 = date;
+	format date2 ddmmyy10.;
+/*	SAS_date = date - 21915;*/
+	weather_date = date2-21915;
+	format weather_date date9.;
+	rain_probability = 'probability of rain'n;
+run;
+
+
+/* Join the tables together, expect missing values where sensor has not recorded */
+/* 	measurements but the weather API has and export to POC folder */
+proc sql;
+	create table '\\sashq\root\mis\bi_env\VA_landingzone\IT_Analytics\IT_ANALYSIS_PILOT\weather_soil_joined' as
+	select * 
+	from weather_prep as x left join soil_prep as y
+	on x.weather_date = y.soil_date;
+quit;
+
