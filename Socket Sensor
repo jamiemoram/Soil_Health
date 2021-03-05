@@ -1,0 +1,120 @@
+import socket 
+import codecs
+import requests
+import json
+import sys
+
+import subprocess
+
+##ethernetOpen = subprocess.run(["sudo", "ifconfig", "eth0", "up"])
+##ethernetClosed = subprocess.run(["sudo", "ifconfig", "eth0", "down"])
+
+
+# Bind 
+
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+s.bind(('192.168.10.1', 8096))
+
+s.listen(5)
+
+ 
+
+# Listen to the client socket
+
+#while True:
+
+clientsocket, address = s.accept()
+
+print('f"Connection from {address} has been established"')
+
+clientsocket.recv(1024)
+
+hexCode = clientsocket.recv(1024).hex()
+
+ 
+
+# Print the raw byte readings
+
+print (hexCode) 
+
+ 
+
+# Grab hex digits from the known positions within byte string, for neccessary readings
+
+nit = hexCode[32:40]
+
+pho = hexCode[40:48]
+
+pot = hexCode[48:56]
+
+ 
+
+# Convert from hex to integer
+
+nitrogen = str(int(nit, 16))
+
+phosphorous = str(int(pho, 16))
+
+potassium = str(int(pot, 16))
+    
+# Print converted variables
+    
+print('Nitrogen Level = {} mg/kg \nPhosphorous Level = {} mg/kg \nPotassium Level = {} mg/kg'.format(nitrogen, phosphorous, potassium))
+    
+
+# Close connection
+
+clientsocket.close()
+    
+
+
+
+authPost = '0SNP4e8sZ0cZJ0U2R3RmD1MqzbRniYKu2u7IjO9v'
+
+##username = 'netuser442'
+##password= 'hLSgq2DCu7jtIm4ZzTmt'
+
+##proxies = {
+##    "http" :"62.255.11.6:28462",
+##    "http" :"62.255.11.6:28462"
+##}
+
+proxies = {'https' : 'http://netuser442:hLSgq2DCu7jtIm4ZzTmt@62.255.11.6:28462'}
+
+##x1 = {"http://"+ username + ":" + password + "@" + "62.255.11.6:28462"}
+##http://user:password@proxyip:port
+##auth = HTTPProxyDigestAuth(username, password)
+
+postUrl = 'https://gbrmisemp01.sas.com/emp/api.php'
+
+# provide the data the format below with whatever code you want to the
+jsonData = {
+            'auth': authPost,
+            'nitrogen': nitrogen,
+            'soil': phosphorous,
+            'potassium': potassium,
+            'device': '1'
+            }
+
+##print(jsonData)
+
+##post = requests.post(postUrl,  data =jsonData, proxies=, auth=auth)
+post = requests.post(postUrl,  data =jsonData, proxies=proxies)
+
+
+### for testing DELETE  when ready
+
+##print('POST URL: ' + postUrl)
+
+
+##print('POST STATUS CODE: ' + str(post.status_code))
+
+
+##print('POST DATA: ' + post.text)
+exitList = []
+
+if len(exitList) < 2:
+  sys.exit('exitted')
+
+
