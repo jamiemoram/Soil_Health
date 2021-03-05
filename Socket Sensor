@@ -73,7 +73,7 @@ clientsocket.close()
 authPost = 'BLANKETED FOR SECURITY' - contact IT to request permission
 
 
-proxies = {'https' : 'http://netuser442:hLSgq2DCu7jtIm4ZzTmt@62.255.11.6:28462'}
+proxies = {'https' : 'http://netuser442:<INSERT_PASSWORD>@62.255.11.6:28462'}
 
 
 postUrl = 'https://gbrmisemp01.sas.com/emp/api.php'
