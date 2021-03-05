@@ -70,21 +70,11 @@ clientsocket.close()
 
 
 
-authPost = '0SNP4e8sZ0cZJ0U2R3RmD1MqzbRniYKu2u7IjO9v'
+authPost = 'BLANKETED FOR SECURITY' - contact IT to request permission
 
-##username = 'netuser442'
-##password= 'hLSgq2DCu7jtIm4ZzTmt'
-
-##proxies = {
-##    "http" :"62.255.11.6:28462",
-##    "http" :"62.255.11.6:28462"
-##}
 
 proxies = {'https' : 'http://netuser442:hLSgq2DCu7jtIm4ZzTmt@62.255.11.6:28462'}
 
-##x1 = {"http://"+ username + ":" + password + "@" + "62.255.11.6:28462"}
-##http://user:password@proxyip:port
-##auth = HTTPProxyDigestAuth(username, password)
 
 postUrl = 'https://gbrmisemp01.sas.com/emp/api.php'
 
@@ -112,8 +102,9 @@ post = requests.post(postUrl,  data =jsonData, proxies=proxies)
 
 
 ##print('POST DATA: ' + post.text)
-exitList = []
 
+# exit program if list is less than 2 (always true)
+exitList = []
 if len(exitList) < 2:
   sys.exit('exitted')
 
