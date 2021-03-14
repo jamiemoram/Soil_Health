@@ -47,9 +47,161 @@ run;
 /* Join the tables together, expect missing values where sensor has not recorded */
 /* 	measurements but the weather API has and export to POC folder */
 proc sql;
-	create table '\\sashq\root\mis\bi_env\VA_landingzone\IT_Analytics\IT_ANALYSIS_PILOT\weather_soil_joined' as
+	create table weather_soil_join as
 	select * 
 	from weather_prep as x left join soil_prep as y
 	on x.weather_date = y.soil_date;
 quit;
+
+/* Duplicate the rain column and give everything greater than 14 days a 0 */
+data rain_14days_prep;
+	set weather_soil_join;
+	rain_dup = rain;
+	if weather_date < (today() - 14) or weather_date > today() or weather_date = . then do;
+		rain_dup = 0;
+	end;
+	last14_rain_cumulative + rain_Dup;
+	if weather_date = today() then today_flag = 1;
+run;
+
+/* Check the temperature to see if the day is scorched */
+data is_day_scortched;
+	set rain_14days_prep;
+	if today_flag = 1 then do;
+		if Max_Temp >= 28 then do;
+			Today_is_Scortched = 1;
+		end;
+		else if Max_Temp < 28 then do;
+			Today_is_Scortched = 0;
+		end;
+	end;
+run;
+
+/* Check to see if there have been more than 14 days of temperatures lower than 15 */
+data days_of_low_temp;
+	set is_day_scortched;
+/*	Flag the dates in between todays date and date 14 days ago 
+	with a 1 if they're too low*/
+	if weather_date >= (today() - 14) and weather_date <= today() then do;
+		if day_temp <= 15 then do;
+			low_temp = 1;
+		end;
+		else do;
+			low_temp = 0;
+		end;
+	end;
+/*	if a single day is not low then flag 1 into the not_low column */
+	if low_temp = 0 then not_low = 1;
+/*	sum all values in not_low column so total of 'today' can be checked */
+	cumulative_high_temp + not_low;
+run;
+
+
+/* Check to see if there have been more than 14 days of temperatures higher than 25 */
+data days_of_high_temp;
+	set days_of_low_temp;
+/*	Flag the dates in between todays date and date 14 days ago 
+	with a 1 if they're too high*/
+	if weather_date >= (today() - 14) and weather_date <= today() then do;
+		if max_temp >= 25 then do;
+			high_temp = 1;
+		end;
+		else do;
+			high_temp = 0;
+		end;
+	end;
+/*	if a single day is not too high, then flag it in 'not_high' column */
+	if high_temp = 0 then not_high = 1;
+/*	sum the 'not_high' column to determine if fertilisation decision is affected */
+	cumulative_low_temp + not_high;
+run;
+
+
+/*so if cumulative_low_temp has a value of 1 or over 'today', then the weather conditions */
+/*are fine for fertilisation, if there is a value of 0 in not_high column for 'today' */
+/*then it is too hot for fertilisation*/
+
+/* Apply fuzzy logic to the data, labelling the recorded nitrate levels */
+data final_soil_weather_prep;
+	set days_of_high_temp;
+	if today_flag = 1 then do;
+		if Nitrogen <= 5 then do;
+			Soil_Status = 'Danger';
+		end;
+		else if (5 < Nitrogen <=10) then do;
+			Soil_Status = 'Very Low';
+		end;
+		else if (10 < Nitrogen <= 24) then do;
+			Soil_Status = 'Low';
+		end;
+		else if (24 < Nitrogen <=50) then do;
+			Soil_Status = 'Good';
+		end;
+		else if (50 < Nitrogen) then do;
+			Soil_Status = 'Very High';
+		end; 
+		else if Nitrogen = . then do;
+			Soil_Status = 'Error';
+		end;
+	end;
+run;
+
+/* 	Check Soil Status for signs of danger, looking specifically if 2 out of 3 readings on a day 
+	are danger (hence the tally)*/
+data final_soil_weather_prep2;
+	set final_soil_weather_prep;
+	soil_danger = 0;
+	if today_flag = 1 then do;
+		if Soil_Status = 'Danger' then do;
+			Soil_Danger + 1;
+		end;
+		cumulative_soil_Danger + soil_danger;
+	end;
+run;
+
+/* Check each condition to see if danger count receives a 1, if it does then Fertilise should be set to NO */
+data final_soil_weather_prep3;
+	set final_soil_weather_prep2;
+	Danger_Count = 0;
+	if (today_flag = 1) then do;
+
+/*		check if the current day is too hot */
+		if (Today_is_Scortched = 1) then Danger_Count + 1;
+
+/*		check if the last 14 days have been too cold */
+		if (cumulative_high_temp >= 1) then Danger_Count + 1;
+
+/*		check if the last 14 days have been too hot and that there has been no rain */
+		if (cumulative_low_temp = 0) and (last14_rain_cumulative < 1) then Danger_Count + 1;
+
+/*		check if 'soil_danger' has a value greater than 1, if so set a 1 to Danger_Count */
+		if (cumulative_soil_danger > 1) then Danger_Count + 1;
+	end;
+run;
+
+/* Set fertilise column based on danger count having a value of more than 0 for todays date */
+data final_soil_weather;
+	set final_soil_weather_prep3;
+	if (today_flag = 1) then do;
+		if danger_count >= 1 then Fertilise = 'N';
+		else Fertilise = 'Y';
+	end;
+run;
+
+/* upload to the PILOT folder for VA loading*/
+proc sql;
+	create table '\\sashq\root\mis\bi_env\VA_landingzone\IT_Analytics\IT_ANALYSIS_PILOT\weather_soil_joined' as
+	select * 
+	from final_soil_weather;
+quit;
+
+
+/*proc sql;*/
+/*	create table '\\sashq\root\mis\bi_env\VA_landingzone\IT_Analytics\IT_ANALYSIS_PILOT\weather_soil_joined' as*/
+/*	select * */
+/*	from weather_prep as x left join soil_prep as y*/
+/*	on x.weather_date = y.soil_date;*/
+/*quit;*/
+
+
 
