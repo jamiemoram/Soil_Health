@@ -1,0 +1,629 @@
+libname x '\\sashq\root\mis\bi_env\VA_landingzone\IT_Analytics\IT_ANALYSIS_PILOT';
+
+proc import datafile = '\\gbrmisappstest\e$\mis_projects\AIoT Soil Health\VarianceDataset.xlsx'
+out = variance_excel
+dbms = xlsx
+replace
+;
+run;
+
+proc sort data=variance_excel;
+	by date;
+run;
+
+
+/* Count the observations by date */
+data VarianceDataset;
+	set variance_excel;
+	by date;
+	if first.date then do;
+		group_count = 1;
+		actual_date = 0;
+	end;	
+	if first.date = 0 and last.date = 0 then do;
+		group_count + 1;
+		actual_date = 0;
+	end;
+	if last.date = 1 then do;
+		group_count + 1;
+		actual_date = 1;
+	end;
+run;
+
+/* format the date */
+Data VarianceDataset2;
+set VarianceDataset;
+format date3 date9.;
+date3 = input ( date, ?? DDMMYY10.);
+run;
+
+/* sort by date */
+proc sort data=VarianceDataset2;
+	by date3;
+run;
+
+/* discover how many observations for each date */
+proc sql;
+create table max_group as
+   select 	datetime,
+   			probability_of_rain,
+			day_temp,
+			night_temp,
+			min_temp,
+			max_temp,
+			rain,
+			date,
+			time,
+			group_count,
+			actual_date,
+			date3,
+          (select max(group_count) as max_count from VarianceDataset2 where a.date=date group by date) as max_count
+   from VarianceDataset2 as a;
+quit;
+
+/* sort by date */
+proc sort data=max_group;
+	by date3;
+run;
+
+/* label the day prediction; the maximum group value represents the latest prediction, if the date is in the future
+	then set day prediction to 0 */
+data day_predic_variance;
+	set max_group;
+	by date3;
+	retain day_prediction 0;
+	if first.date3 and (date3 <= today()) then do;
+		day_prediction = max_count;
+	end;
+	if first.date3 = 0 and last.date3 = 0 and (date3 <= today()) then do;
+		day_prediction = day_prediction - 1;
+	end;
+	if last.date3 = 1 and (date3 <= today()) then do;
+		day_prediction = day_prediction - 1;
+	end;
+	else if (date3 > today()) then do;
+		day_prediction = 0;
+	end;
+run;
+
+/* sort by date with the most recent day prediction first */
+proc sort data=day_predic_variance;
+	by date3 descending group_count ;
+run;
+
+/* flag the actual readings for the day */
+data actual_variance;
+	set day_predic_variance;
+	by date3;
+	retain actual_rain 0;
+	retain actual_temp 0;
+	if first.date3 = 1 then do;
+		actual_rain = rain;
+		actual_temp = day_temp;
+	end;
+	if first.date3=0 then do;
+		actual_rain= actual_rain-0;
+		actual_temp = actual_temp-0;
+	end;
+run;
+
+/* highlight the difference between predicted and actual */
+data fin_variance;
+	set actual_variance;
+	if (date3 <= today()) then do;
+		variance_temp = day_temp - actual_temp;
+		variance_rain = rain - actual_rain;
+	end;
+	else do;
+		variance_temp = 0;
+		variance_rain = 0;
+	end;
+run;
+
+/* sort by day prediction */
+proc sort data=fin_variance;
+	by day_prediction;
+run;
+
+/* sum and average the temperature differences */
+proc sql;
+	create table sum_temp_variables as
+	select 	datetime,
+			probability_of_rain,
+			day_temp,
+			night_temp,
+			min_temp,
+			max_temp,
+			rain,
+			date,
+			time,
+			group_count,
+			actual_date,
+			date3, 
+			max_count,
+			day_prediction,
+			actual_rain,
+			actual_temp,
+			variance_temp, 
+			variance_rain,
+			sum(variance_temp) as temp_variance_sum,
+			sum(variance_rain) as rain_variance_sum,
+			avg(variance_temp) as temp_variance_avg,
+			avg(variance_rain) as rain_variance_avg
+	from fin_variance
+	group by day_prediction;
+quit;
+
+/* calculate the positive difference in temp and negative, ignore day prediction 0 as this is for future dates*/
+data final_variance2; 
+	set sum_temp_variables;
+	by day_prediction;
+	if first.day_prediction then do;
+		if variance_temp >= 0 then do;
+			positive_temp_variance = 0;
+			retain positive_temp_variance 0;
+			positive_temp_variance = positive_temp_variance + variance_temp;
+		end;
+		else do;
+			negative_temp_variance = 0;
+			retain negative_temp_variance 0;
+			negative_temp_variance = negative_temp_variance + variance_temp;
+		end;
+	end;
+run;
+
+/* create positive and negative sums, averages and medians for temp and rain differences */
+proc sql;
+	create table pos_neg_variance as
+   	select 	datetime,
+			probability_of_rain,
+			day_temp,
+			night_temp,
+			min_temp,
+			max_temp,
+			rain,
+			date,
+			time,
+			group_count,
+			actual_date,
+			date3, 
+			max_count,
+			day_prediction,
+			actual_rain,
+			actual_temp,
+			variance_temp, 
+			variance_rain,
+			sum(variance_temp) as temp_variance_sum,
+			sum(variance_rain) as rain_variance_sum,
+			avg(variance_temp) as temp_variance_avg,
+			avg(variance_rain) as rain_variance_avg,
+        	sum(case when variance_temp >= 0 then variance_temp end) as pos_temp_sum,
+        	sum(case when variance_temp < 0 then variance_temp end) as neg_temp_sum,
+			avg(case when variance_temp >= 0 then variance_temp end) as pos_temp_avg,
+        	avg(case when variance_temp < 0 then variance_temp end) as neg_temp_avg,
+			median(case when variance_temp >= 0 then variance_temp end) as pos_temp_median,
+        	median(case when variance_temp < 0 then variance_temp end) as neg_temp_median,
+			sum(case when variance_rain >= 0 then variance_rain end) as pos_rain_sum,
+        	sum(case when variance_rain < 0 then variance_rain end) as neg_rain_sum,
+			avg(case when variance_rain >= 0 then variance_rain end) as pos_rain_avg,
+        	avg(case when variance_rain < 0 then variance_rain end) as neg_rain_avg,
+			median(case when variance_rain >= 0 then variance_rain end) as pos_rain_median,
+        	median(case when variance_rain < 0 then variance_rain end) as neg_rain_median
+    from Final_variance2
+    group by day_prediction;
+quit;
+
+/* find the average range of differences between pos/neg temp and rain */
+data final_variance3;
+	set pos_neg_variance;
+	by day_prediction;
+	avg_temp_range = pos_temp_avg - neg_temp_avg;
+	avg_rain_range = pos_rain_avg - neg_rain_avg;
+	median_rain_range = pos_rain_median - neg_rain_median;
+	median_temp_range = pos_temp_median - neg_temp_median;
+	if first.day_prediction then do;
+		unique_day_flag = 1;
+	end;
+run;
+
+/* sort by date */
+proc sort data=final_variance3;
+	by date3;
+run;
+
+/* highlight the unique dates */
+data final_variance3b;
+	set final_variance3;
+	by date3;
+	if first.date3 then do;
+		unique_date_flag = 1;
+	end;
+run;
+
+/* create a table with the next 5 days, prepping for ranking */
+data rank_temp_prep (Drop =count);
+	count = 1;
+	do until(count = 6);
+		date = today()+count;
+		output;
+		count+1;
+		format date date9.;
+	end;
+run;
+
+/* join this rank prepping table to the main table, to get values. Actual_date will retrieve the latest reading for
+   the future dates */
+proc sql;
+	create table join_temp_next5_dist as
+	select a.*, b.date3, b.day_temp
+	from rank_temp_prep a left join final_variance3b b 
+	on a.date = b.date3
+	where actual_date = 1;
+quit;
+
+/* add in the ideal temp values, give them an ID relating to the day prediction values*/
+data ideal_temp_table (drop = date3);
+	set join_temp_next5_dist;
+	by date;
+	ideal_temp = 22;
+	row_obs = _n_ + 1;
+run;
+
+/* label each observation with an ID that increments, to use as a key to join with the day prediction values */
+proc sql;
+	create table up_low_temp_dist as
+	select a.*, b.pos_temp_avg, b.neg_temp_avg
+	from ideal_temp_table a left join final_variance3b b 
+	on a.row_obs = b.day_prediction;
+quit;
+
+/* sort by the incrementing values */
+proc sort data=up_low_temp_dist;
+	by row_obs;
+run;
+
+/* flag first of each row obsevation as unique */
+data up_low_dist_uniqueFLG;
+	set up_low_temp_dist;
+	by row_obs;
+	if first.row_obs then unique_row = 1;
+	else unique_row = 0;
+run;
+
+/*create variables that give an upper temp confidence, lower temp confidence and then get distance between upper,
+  lower and predicted values from the ideal. These 3 values for each day will be ranked against the other days,
+  with the corresponding upper/lower/predicted values */
+data distances(drop=row_obs);
+	set up_low_dist_uniqueFLG;
+	upper_temp_var = pos_temp_avg + day_temp;
+	lower_temp_var = neg_temp_avg + day_temp;
+	distance_up_temp = ideal_temp - upper_temp_var;
+	distance_low_temp = ideal_temp - lower_temp_var;
+	distance_predicted_temp = ideal_temp - day_temp;
+	where unique_row = 1;
+	day_predictor=_n_;
+run;
+
+/* rank the upper confidence limits for temp */
+proc rank data=distances descending out=distances1;
+	var distance_up_temp;
+	ranks upper_temp_rank;
+run;
+
+/* rank the lower confidence limits for temp */
+proc rank data=distances1 descending out=distances2;
+	var distance_low_temp;
+	ranks lower_temp_rank;
+run;
+
+/* rank the predicted confidence limits for temp */
+proc rank data=distances2 descending out=distances3;
+	var distance_predicted_temp;
+	ranks predicted_temp_rank;
+run;
+
+
+/* create a table with the last 6 and next 5 days, prepping for rain ranking */
+data rank_rain_prep (Drop =count);
+	count = -5;
+	do until(count = 6);
+		date = today()-count;
+		output;
+		count+1;
+		format date date9.;
+	end;
+run;
+
+/* join to the main table to get actual values for past dates and predicted values for future */
+proc sql;
+	create table join_rain_next5_dist as
+	select a.*, b.date3, b.rain
+	from rank_rain_prep a left join final_variance3b b 
+	on a.date = b.date3
+	where actual_date = 1;
+quit;
+
+/* add in the ideal rain values, give each obs in the future an ID relating to the day prediction values */
+data ideal_rain_table (drop = date3);
+	set join_rain_next5_dist;
+	by date;
+	ideal_rain = 10;
+	if date3 > today() then do;
+		row_obs = _n_ - 5;
+	end;
+	else do;
+		row_obs = 1;
+	end;
+run;
+
+/* label each observation with an ID that increments, to use as a key to join with the day prediction values */
+proc sql;
+	create table up_low_rain_dist as
+	select a.*, b.pos_rain_avg, b.neg_rain_avg
+	from ideal_rain_table a left join final_variance3b b 
+	on a.row_obs = b.day_prediction;
+quit;
+
+/* sort by the incrementing values */
+proc sort data=up_low_rain_dist;
+	by date row_obs;
+run;
+
+/* flag first of each row obsevation as unique */
+data up_low_rain_dist_uniqueFLG;
+	set up_low_rain_dist;
+	by date row_obs;
+	if first.row_obs then unique_row = 1;
+	else unique_row = 0;
+run;
+
+/* label each observation with an ID that increments, to use as a key to join with the day prediction values */
+/*proc sql;*/
+/*	create table up_low_rain_dist as*/
+/*	select a.*, b.pos_rain_avg, b.neg_rain_avg*/
+/*	from ideal_rain_table a left join final_variance3b b */
+/*	on a.row_obs = b.day_prediction;*/
+/*quit;*/
+
+/* sort by the incrementing values */
+/*proc sort data=up_low_rain_dist;*/
+/*	by row_obs;*/
+/*run;*/
+
+/* flag first of each row obsevation as unique */
+/*data up_low_rain_dist_uniqueFLG;*/
+/*	set up_low_rain_dist;*/
+/*	by row_obs;*/
+/*	if first.row_obs then unique_row = 1;*/
+/*	else unique_row = 0;*/
+/*run;*/
+
+/*create variables that give an upper rain confidence, lower rain confidence and then get distance between upper,
+  lower and predicted values from the ideal. These 3 values for each day will be used to calculate rain fallen in last
+  7 days, combining actual values and predicted and then rank against the other days, with the 
+  corresponding upper/lower/predicted values */
+data rain_distances(drop=row_obs);
+	set up_low_rain_dist_uniqueFLG;
+	upper_rain_var = pos_rain_avg + rain;
+	lower_rain_var = neg_rain_avg + rain;
+	distance_up_rain = ideal_rain - upper_rain_var;
+	distance_low_rain = ideal_rain - lower_rain_var;
+	distance_predicted_rain = ideal_rain - rain;
+	where unique_row = 1;
+	if date > today() then do;
+		day_predictor = _n_ - 6;
+	end;
+	ID = _n_;
+run;
+
+/* calculate the total rainfall for last 7 days, based on the 1 day prediction */
+data day_pred_rain;
+	set rain_distances;
+	if id in (1,2,3,4,5,6) then do;
+		one_day_rain_up_var + rain;
+		one_day_rain_low_var + rain;
+		one_day_rain_var + rain;
+	end;
+	if id = 7 then do;
+		one_day_rain_up_var = one_day_rain_up_var + upper_rain_var;
+		one_day_rain_low_var = one_day_rain_low_var + lower_rain_var;
+		one_day_rain_var = one_day_rain_var + rain;
+	end;
+	if id > 7 then do;
+		one_day_rain_up_var = 0;
+		one_day_rain_low_var = 0;
+		one_day_rain_var = 0;
+	end;
+
+/*	calculate two day predictions */
+	if id in (2,3,4,5,6) then do;
+		two_day_rain_up_var + rain;
+		two_day_rain_low_var + rain;
+		two_day_rain_var + rain;
+	end;
+	if id = 7 then do;
+		two_day_rain_up_var = two_day_rain_up_var + upper_rain_var;
+		two_day_rain_low_var = two_day_rain_low_var + lower_rain_var;
+		two_day_rain_var = two_day_rain_var + rain;
+	end;
+	if id = 8 then do;
+		two_day_rain_up_var = two_day_rain_up_var + upper_rain_var;
+		two_day_rain_low_var = two_day_rain_low_var + lower_rain_var;
+		two_day_rain_var = two_day_rain_var + rain;
+	end;
+	if id > 8 then do;
+		two_day_rain_up_var = 0;
+		two_day_rain_low_var = 0;
+		two_day_rain_var = 0;
+	end;
+
+	/*	calculate three day predictions */
+	if id in (3,4,5,6) then do;
+		three_day_rain_up_var + rain;
+		three_day_rain_low_var + rain;
+		three_day_rain_var + rain;
+	end;
+	if id = 7 then do;
+		three_day_rain_up_var = three_day_rain_up_var + upper_rain_var;
+		three_day_rain_low_var = three_day_rain_low_var + lower_rain_var;
+		three_day_rain_var = three_day_rain_var + rain;
+	end;
+	if id = 8 then do;
+		three_day_rain_up_var = three_day_rain_up_var + upper_rain_var;
+		three_day_rain_low_var = three_day_rain_low_var + lower_rain_var;
+		three_day_rain_var = three_day_rain_var + rain;
+	end;
+	if id = 9 then do;
+		three_day_rain_up_var = three_day_rain_up_var + upper_rain_var;
+		three_day_rain_low_var = three_day_rain_low_var + lower_rain_var;
+		three_day_rain_var = three_day_rain_var + rain;
+	end;
+	if id > 9 then do;
+		three_day_rain_up_var = 0;
+		three_day_rain_low_var = 0;
+		three_day_rain_var = 0;
+	end;
+
+	/*	calculate four day predictions */
+	if id in (4,5,6) then do;
+		four_day_rain_up_var + rain;
+		four_day_rain_low_var + rain;
+		four_day_rain_var + rain;
+	end;
+	if id = 7 then do;
+		four_day_rain_up_var = four_day_rain_up_var + upper_rain_var;
+		four_day_rain_low_var = four_day_rain_low_var + lower_rain_var;
+		four_day_rain_var = four_day_rain_var + rain;
+	end;
+	if id = 8 then do;
+		four_day_rain_up_var = four_day_rain_up_var + upper_rain_var;
+		four_day_rain_low_var = four_day_rain_low_var + lower_rain_var;
+		four_day_rain_var = four_day_rain_var + rain;
+	end;
+	if id = 9 then do;
+		four_day_rain_up_var = four_day_rain_up_var + upper_rain_var;
+		four_day_rain_low_var = four_day_rain_low_var + lower_rain_var;
+		four_day_rain_var = four_day_rain_var + rain;
+	end;
+	if id = 10 then do;
+		four_day_rain_up_var = four_day_rain_up_var + upper_rain_var;
+		four_day_rain_low_var = four_day_rain_low_var + lower_rain_var;
+		four_day_rain_var = four_day_rain_var + rain;
+	end;
+	if id > 10 then do;
+		four_day_rain_up_var = 0;
+		four_day_rain_low_var = 0;
+		four_day_rain_var = 0;
+	end;
+
+		/*	calculate five day predictions */
+	if id in (5,6) then do;
+		five_day_rain_up_var + rain;
+		five_day_rain_low_var + rain;
+		five_day_rain_var + rain;
+	end;
+	if id = 7 then do;
+		five_day_rain_up_var = five_day_rain_up_var + upper_rain_var;
+		five_day_rain_low_var = five_day_rain_low_var + lower_rain_var;
+		five_day_rain_var = five_day_rain_var + rain;
+	end;
+	if id = 8 then do;
+		five_day_rain_up_var = five_day_rain_up_var + upper_rain_var;
+		five_day_rain_low_var = five_day_rain_low_var + lower_rain_var;
+		five_day_rain_var = five_day_rain_var + rain;
+	end;
+	if id = 9 then do;
+		five_day_rain_up_var = five_day_rain_up_var + upper_rain_var;
+		five_day_rain_low_var = five_day_rain_low_var + lower_rain_var;
+		five_day_rain_var = five_day_rain_var + rain;
+	end;
+	if id = 10 then do;
+		five_day_rain_up_var = five_day_rain_up_var + upper_rain_var;
+		five_day_rain_low_var = five_day_rain_low_var + lower_rain_var;
+		five_day_rain_var = five_day_rain_var + rain;
+	end;
+	if id = 11 then do;
+		five_day_rain_up_var = five_day_rain_up_var + upper_rain_var;
+		five_day_rain_low_var = five_day_rain_low_var + lower_rain_var;
+		five_day_rain_var = five_day_rain_var + rain;
+	end;
+	if id > 11 then do;
+		five_day_rain_up_var = 0;
+		five_day_rain_low_var = 0;
+		five_day_rain_var = 0;
+	end;
+run;
+
+data rain_distance;
+	set day_pred_rain;
+	if day_predictor = 1 then do;
+		up_rain_distance = ideal_rain - one_day_rain_up_var;
+		low_rain_distance = ideal_rain - one_day_rain_low_var;
+		rain_distance = ideal_rain - one_day_rain_var;
+	end;
+	if day_predictor = 2 then do;
+		up_rain_distance = ideal_rain - two_day_rain_up_var;
+		low_rain_distance = ideal_rain - two_day_rain_low_var;
+		rain_distance = ideal_rain - two_day_rain_var;
+	end;
+	if day_predictor = 3 then do;
+		up_rain_distance = ideal_rain - three_day_rain_up_var;
+		low_rain_distance = ideal_rain - three_day_rain_low_var;
+		rain_distance = ideal_rain - three_day_rain_var;
+	end;
+	if day_predictor = 4 then do;
+		up_rain_distance = ideal_rain - four_day_rain_up_var;
+		low_rain_distance = ideal_rain - four_day_rain_low_var;
+		rain_distance = ideal_rain - four_day_rain_var;
+	end;
+	if day_predictor = 5 then do;
+		up_rain_distance = ideal_rain - five_day_rain_up_var;
+		low_rain_distance = ideal_rain - five_day_rain_low_var;
+		rain_distance = ideal_rain - five_day_rain_var;
+	end;
+run;
+
+/* Rank the predicted 5 days, by how much rain is expected, based on the most amount (up_rain_distance), least 
+	amount (low_rain_distance) and predicted amount (rain_distance) */
+
+/* Start with most amount anticipated */
+proc rank data=rain_distance descending out=rain_distances1;
+	var up_rain_distance;
+	ranks upper_rain_rank;
+run;
+
+
+/* Least amount anticipated */
+proc rank data=rain_distances1 out=rain_distances2;
+	var low_rain_distance;
+	ranks lower_rain_rank;
+run;
+
+
+/* Start with most amount anticipated */
+proc rank data=rain_distances2 descending out=rain_distances3;
+	var rain_distance;
+	ranks rain_rank;
+run;
+
+
+/* join the dates and the temp / rain ranks */
+proc sql;
+	create table Final_5day_Ranks_prep as
+	select 	a.date, a.upper_temp_rank, a.lower_temp_rank, a.predicted_temp_rank, b.date, b.upper_rain_rank, 
+			b.lower_rain_rank, b.rain_rank
+	from distances3 as a left join rain_distances3 as b
+	on a.date = b.date;
+quit;
+
+/* sum the ranks for each date */
+data Final_5day_ranks_prep2;
+	set Final_5day_Ranks_prep;
+	total = sum(of _NUMERIC_) - date;
+run;
+
+/* Rank the final totals for both rain and temp ranks */
+proc rank data=Final_5day_ranks_prep2 out=x.Final_5day_ranks;
+	var total;
+	ranks Final_Rank;
+run;
